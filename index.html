@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Engine Mk 8 (Hybrid)</title>
+    
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        /* Custom font and animation configuration */
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* ANTI-COPY CSS LAYER */
+        .no-select {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            cursor: default;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 no-select">
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // ==========================================
+        //  CONFIGURABLE SETTINGS (CHANGE THESE)
+        // ==========================================
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzItho88JcLSWNyQHg47QdGWPhdrF-AJV_Auz-5ftNAJeMMvGla9q5xpSqKcJYwL-lyzA/exec"; 
+        const QUIZ_TITLE = "TRIAL VERSION FIX 1"; 
+        const ALLOWED_STUDENTS = ["13", "Yoshua", "Jevan", "Student", "Guest"];
+
+        const MOCK_QUESTIONS = [
+            { id: 1, q: "What is $2x + 5 = 15$?", options: ["x = 5", "x = 10", "x = 7", "x = 15"], answer: "x = 5" },
+            { id: 2, q: "Demo Mode is active. Does this work?", options: ["Yes", "No", "Maybe", "I hope so"], answer: "Yes" }
+        ];
+
+        // ==========================================
+        //  HELPER FUNCTIONS & COMPONENTS
+        // ==========================================
+        
+        // 🎲 SHUFFLE UTILITY: Randomizes the position of choices
+        const shuffleArray = (array) => {
+            const newArr = [...array];
+            for (let i = newArr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
+            }
+            return newArr;
+        };
+
+        const MathText = ({ text }) => {
+            if (!text) return null;
+            if (!window.katex) return <span>text</span>;
+            const parts = text.split('$');
+            return (
+                <span>
+                    {parts.map((part, index) => {
+                        if (index % 2 !== 0) {
+                            try {
+                                const html = window.katex.renderToString(part, { displayMode: false, throwOnError: false });
+                                return <span key={index} dangerouslySetInnerHTML={{ __html: html }} />;
+                            } catch (e) { return <span key={index}>{part}</span>; }
+                        }
+                        return <span key={index}>{part}</span>;
+                    })}
+                </span>
+            );
+        };
+
+        // ==========================================
+        //  MAIN APP COMPONENT
+        // ==========================================
+        function App() {
+            const [studentName, setStudentName] = useState(() => sessionStorage.getItem("quiz_studentName") || "");
+            const [step, setStep] = useState('loading'); 
+            const [questions, setQuestions] = useState(() => JSON.parse(sessionStorage.getItem("quiz_questions")) || []);    
+            const [currentIdx, setCurrentIdx] = useState(() => parseInt(sessionStorage.getItem("quiz_currentIdx")) || 0);    
+            const [answers, setAnswers] = useState(() => JSON.parse(sessionStorage.getItem("quiz_answers")) || {});         
+            const [timings, setTimings] = useState(() => JSON.parse(sessionStorage.getItem("quiz_timings")) || {});         
+            const [showConfirm, setShowConfirm] = useState(false); 
+            const [accessDenied, setAccessDenied] = useState(false); 
+            const [isDemo, setIsDemo] = useState(() => sessionStorage.getItem("quiz_isDemo") === "true");         
+            const questionStartTime = useRef(null);              
+
+            // 🔒 ANTI-COPY JAVASCRIPT LAYER
+            useEffect(() => {
+                const blockRightClick = (e) => e.preventDefault();
+                const blockShortcuts = (e) => {
+                    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X' || e.key === 'a' || e.key === 'A')) {
+                        e.preventDefault();
+                        return false;
+                    }
+                };
+                window.addEventListener("contextmenu", blockRightClick);
+                window.addEventListener("keydown", blockShortcuts);
+                return () => {
+                    window.removeEventListener("contextmenu", blockRightClick);
+                    window.removeEventListener("keydown", blockShortcuts);
+                };
+            }, []);
+
+            // SAFEGUARD: Native Refresh/Close Alert
+            useEffect(() => {
+                const handleBeforeUnload = (e) => {
+                    if (step === 'quiz' || step === 'submitting') {
+                        e.preventDefault();
+                        e.returnValue = "You will lose your unsubmitted progress. Are you sure?";
+                        return e.returnValue;
+                    }
+                };
+                window.addEventListener("beforeunload", handleBeforeUnload);
+                return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+            }, [step]);
+
+            // AUTO-SAVE ENGINE
+            useEffect(() => {
+                if (step === 'quiz') {
+                    sessionStorage.setItem("quiz_studentName", studentName);
+                    sessionStorage.setItem("quiz_currentIdx", currentIdx.toString());
+                    sessionStorage.setItem("quiz_answers", JSON.stringify(answers));
+                    sessionStorage.setItem("quiz_timings", JSON.stringify(timings));
+                    sessionStorage.setItem("quiz_isDemo", isDemo.toString());
+                    sessionStorage.setItem("quiz_questions", JSON.stringify(questions)); // Keep shuffled array layout saved
+                    sessionStorage.setItem("quiz_savedStep", "quiz");
+                }
+            }, [currentIdx, answers, timings, step, studentName, isDemo, questions]);
+
+            // INITIALIZATION: Handles network pulls and shuffles fresh layouts dynamically
+            useEffect(() => {
+                const savedStep = sessionStorage.getItem("quiz_savedStep");
+
+                if (!SCRIPT_URL || SCRIPT_URL === "PASTE_YOUR_GOOGLE_SCRIPT_URL_HERE") {
+                    setStep('no-url');
+                    return;
+                }
+
+                // If recovering an active session, use the layout already preserved in memory
+                if (savedStep === 'quiz' && questions.length > 0) {
+                    setStep('quiz');
+                    return;
+                }
+
+                if (savedStep === 'quiz' && sessionStorage.getItem("quiz_isDemo") === "true") {
+                    const shuffledMock = MOCK_QUESTIONS.map(q => ({ ...q, options: shuffleArray(q.options) }));
+                    setQuestions(shuffledMock);
+                    setStep('quiz');
+                    return;
+                }
+
+                fetch(SCRIPT_URL)
+                    .then(res => res.json())
+                    .then(data => {
+                        // 🎲 Shuffles option positions sequentially for every incoming question row
+                        const preparedQuestions = data.map(item => ({
+                            ...item,
+                            options: shuffleArray(item.options)
+                        }));
+                        setQuestions(preparedQuestions);
+                        setStep('name');
+                    })
+                    .catch(() => {
+                        if (savedStep === 'quiz') {
+                            const shuffledMock = MOCK_QUESTIONS.map(q => ({ ...q, options: shuffleArray(q.options) }));
+                            setQuestions(shuffledMock);
+                            setStep('quiz');
+                        } else {
+                            setStep('error');
+                        }
+                    });
+            }, []);
+
+            // TIMER TRIGGER
+            useEffect(() => {
+                if (step === 'quiz') questionStartTime.current = Date.now();
+            }, [currentIdx, step]);
+
+            const runAnyway = () => {
+                const shuffledMock = MOCK_QUESTIONS.map(q => ({ ...q, options: shuffleArray(q.options) }));
+                setQuestions(shuffledMock);
+                setIsDemo(true);
+                setStep('name');
+            };
+
+            const startQuiz = () => {
+                const trimmedName = studentName.trim().toLowerCase();
+                const isAllowed = ALLOWED_STUDENTS.some(name => name.toLowerCase() === trimmedName);
+                if (!isAllowed) { setAccessDenied(true); return; } 
+                setStep('quiz');
+            };
+
+            const handleAnswer = (option) => {
+                const secondsTaken = Math.round((Date.now() - questionStartTime.current) / 1000);
+                const qId = questions[currentIdx].id;
+                
+                setAnswers(prev => ({ ...prev, [qId]: option }));   
+                setTimings(prev => ({ ...prev, [qId]: (timings[qId] || 0) + secondsTaken }));
+                
+                if (currentIdx < questions.length - 1) {
+                    setTimeout(() => setCurrentIdx(prev => prev + 1), 300);
+                }
+            };
+
+            const handleFinalSubmit = async () => {
+                setShowConfirm(false);
+                setStep('submitting'); 
+                
+                const payload = {
+                    studentName: studentName,
+                    results: questions.map(q => ({
+                        questionNo: q.id,
+                        studentAnswer: answers[q.id],
+                        correctAnswer: q.answer,
+                        status: answers[q.id] === q.answer ? "Correct" : "Incorrect",
+                        secondsTaken: timings[q.id] || 0
+                    }))
+                };
+
+                const cleanLocalHistory = () => {
+                    sessionStorage.clear();
+                };
+
+                if (isDemo) {
+                    console.log("Demo Submission:", payload);
+                    cleanLocalHistory();
+                    setTimeout(() => setStep('done'), 1500);
+                    return;
+                }
+
+                try {
+                    await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(payload) });
+                    cleanLocalHistory();
+                    setStep('done'); 
+                } catch (e) { setStep('error'); }
+            };
+
+            // ==========================================
+            //  SCREEN DISPLAY RENDERERS
+            // ==========================================
+            if (step === 'loading') return <div className="flex items-center justify-center min-h-screen text-slate-400 font-sans tracking-widest uppercase text-xs">Initializing...</div>;
+            if (step === 'submitting') return <div className="flex flex-col items-center justify-center min-h-screen font-sans"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div><p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sending Results...</p></div>;
+            
+            if (step === 'no-url' || step === 'error') return (
+                <div className="flex flex-col items-center justify-center min-h-screen p-6 font-sans">
+                    <div className="bg-white p-8 rounded-[2rem] shadow-xl text-center border-b-8 border-amber-500 max-w-sm relative">
+                        <div className="text-amber-500 text-4xl mb-4">{step === 'no-url' ? '⚠️' : '🔌'}</div>
+                        <h2 className="text-slate-800 font-black uppercase text-lg leading-tight">{step === 'no-url' ? 'No Script URL' : 'Connection Failed'}</h2>
+                        <p className="text-[10px] text-slate-400 mt-2 leading-relaxed uppercase tracking-widest font-bold">Check Script Permissions or URL constant</p>
+                        <button onClick={runAnyway} className="absolute -bottom-16 right-0 text-[10px] font-black text-slate-400 hover:text-blue-600 transition-colors uppercase tracking-[0.2em] flex items-center gap-2">
+                            Run Anyway (Demo Mode) <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            );
+
+            if (step === 'name') {
+                return (
+                    <div className="flex items-center justify-center min-h-screen p-6 bg-slate-100 font-sans">
+                        <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl max-w-md w-full text-center fade-in">
+                            {isDemo && <div className="bg-amber-100 text-amber-700 text-[9px] font-bold py-1 px-3 rounded-full inline-block mb-4 uppercase tracking-widest">Demo Mode Enabled</div>}
+                            <div className="text-blue-600 text-[10px] font-black mb-2 tracking-[0.4em] uppercase leading-none">Standard Mk 8</div>
+                            <h1 className="text-2xl font-black text-slate-800 mb-8 leading-tight">{QUIZ_TITLE}</h1>
+                            <input 
+                                type="text" 
+                                value={studentName}
+                                onChange={(e) => {setStudentName(e.target.value); setAccessDenied(false);}}
+                                className={`w-full p-4 bg-slate-50 border-2 rounded-2xl mb-2 text-center text-xl outline-none transition-all ${accessDenied ? 'border-red-400' : 'border-transparent focus:border-blue-500'}`}
+                                placeholder="Enter Name"
+                            />
+                            {accessDenied && <p className="text-red-500 text-[10px] font-bold uppercase mb-4 tracking-widest">Entry Denied</p>}
+                            <button onClick={startQuiz} disabled={studentName.length < 2} className="w-full mt-4 bg-blue-600 text-white font-black py-5 rounded-2xl shadow-lg active:scale-95 disabled:opacity-50 transition-all uppercase tracking-[0.2em] text-xs">Start Interactive Quiz</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (step === 'done') {
+                return (
+                    <div className="flex items-center justify-center min-h-screen p-6 text-center font-sans">
+                        <div className="bg-white p-12 rounded-[3rem] shadow-2xl max-w-md w-full fade-in border-b-8 border-green-500">
+                            <div className="text-green-500 text-5xl mb-4">✨</div>
+                            <h1 className="text-2xl font-black mb-2 text-slate-800 uppercase tracking-tighter leading-none">Quiz Submitted</h1>
+                            <p className="text-slate-500 text-sm font-semibold mt-4">
+                                Your answers have been recorded successfully.
+                            </p>
+                            <div className="mt-8 p-4 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-2xl uppercase tracking-wider">
+                                🟢 You can safely close the quiz window now.
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            const currentQuestion = questions[currentIdx];
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-slate-50 font-sans">
+                    {showConfirm && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-6">
+                            <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl max-w-sm w-full text-center fade-in">
+                                <h3 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tight">Finish Quiz?</h3>
+                                <div className="flex flex-col gap-3">
+                                    <button onClick={() => setShowConfirm(false)} className="w-full py-4 bg-slate-100 text-slate-500 font-bold rounded-xl uppercase text-xs tracking-widest">Review & Go Back</button>
+                                    <button onClick={handleFinalSubmit} className="w-full py-4 bg-blue-600 text-white font-black rounded-xl shadow-lg uppercase text-xs tracking-widest">Confirm & Submit</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="bg-white p-6 md:p-10 rounded-[3rem] shadow-2xl max-w-xl w-full relative fade-in">
+                        <div className="flex justify-between items-center mb-8 border-b border-slate-50 pb-6">
+                            <button onClick={() => currentIdx > 0 && setCurrentIdx(c => c - 1)} className={`p-2 rounded-full transition-all ${currentIdx === 0 ? 'opacity-0' : 'text-slate-300 hover:text-slate-800'}`}>
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M15 19l-7-7 7-7"></path></svg>
+                            </button>
+                            
+                            <div className="text-slate-800 font-black text-xl leading-none tracking-tight">{currentIdx + 1} <span className="text-slate-300 text-sm">/ {questions.length}</span></div>
+                            
+                            {currentIdx === questions.length - 1 ? (
+                                <button onClick={() => setShowConfirm(true)} className="px-6 py-2 bg-blue-600 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-full shadow-lg">Finish</button>
+                            ) : (
+                                <button onClick={() => setCurrentIdx(c => c + 1)} className="p-2 text-slate-300 hover:text-slate-800 transition-all">
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M9 5l7 7-7 7"></path></svg>
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="mb-12 text-center">
+                            <h2 className="text-xl md:text-2xl font-bold text-slate-800 leading-snug">
+                                <MathText text={currentQuestion?.q || ""} />
+                            </h2>
+                        </div>
+
+                        <div className="flex flex-col gap-3">
+                            {currentQuestion?.options.map((opt, i) => (
+                                <button key={i} onClick={() => handleAnswer(opt)} className={`w-full py-5 px-6 rounded-3xl border-2 text-left font-bold text-lg transition-all ${answers[currentQuestion.id] === opt ? "bg-blue-600 border-blue-600 text-white shadow-xl" : "border-slate-50 hover:border-blue-200 text-slate-600"}`}>
+                                    <div className="flex items-center gap-5">
+                                        <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black ${answers[currentQuestion.id] === opt ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>{String.fromCharCode(65 + i)}</span>
+                                        <MathText text={opt || ""} />
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

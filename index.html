@@ -38,7 +38,7 @@
         // ==========================================
         //  CONFIGURABLE SETTINGS (CHANGE THESE)
         // ==========================================
-        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzItho88JcLSWNyQHg47QdGWPhdrF-AJV_Auz-5ftNAJeMMvGla9q5xpSqKcJYwL-lyzA/exec"; 
+        const SCRIPT_URL = "PASTE_YOUR_GOOGLE_SCRIPT_URL_HERE"; 
         const QUIZ_TITLE = "TRIAL VERSION FIX 1"; 
         const ALLOWED_STUDENTS = ["13", "Yoshua", "Jevan", "Student", "Guest"];
 
@@ -61,32 +61,61 @@
             return newArr;
         };
 
-        const MathText = ({ text }) => {
-            //1. Prevent null/undefined crashes
-            if (text === null || text === null) return null;
+                const MathText = ({ text }) => {
+            // 1. Prevent null/undefined crashes
+            if (text === null || text === undefined) return null;
 
-            //2. Force all incoming data (like the number 15) to be a text string
+            // 2. Force all incoming data to be a text string
             const safeText = String(text);
 
-            //3. Fixed a hidden bug that would have rendered the literal word "text"
+            // 3. Fallback if KaTeX didn't load
             if (!window.katex) return <span>{safeText}</span>;
 
-            //Now .split() will never crash!
-            const parts = safeText.split('$');
+            // 4. Regex matches either $...$ OR \(...\)
+            // It captures the inner math formula using alternative groups
+            const regex = /\$(.*?)\$|\\\\\((.*?)\\\\\)/g;
+            
+            const parts = [];
+            let lastIndex = 0;
+            let match;
+
+            // Dynamically parse text segments
+            while ((match = regex.exec(safeText)) !== null) {
+                // Add plain text before the math match
+                if (match.index > lastIndex) {
+                    parts.push({ isMath: false, text: safeText.substring(lastIndex, match.index) });
+                }
+                
+                // Get the captured math string (group 1 for $, group 2 for \()
+                const mathContent = match[1] || match[2];
+                parts.push({ isMath: true, text: mathContent });
+                
+                lastIndex = regex.lastIndex;
+            }
+
+            // Add remaining trailing plain text
+            if (lastIndex < safeText.length) {
+                parts.push({ isMath: false, text: safeText.substring(lastIndex) });
+            }
+
             return (
                 <span>
                     {parts.map((part, index) => {
-                        if (index % 2 !== 0) {
+                        if (part.isMath) {
                             try {
-                                const html = window.katex.renderToString(part, { displayMode: false, throwOnError: false });
+                                const html = window.katex.renderToString(part.text, { displayMode: false, throwOnError: false });
                                 return <span key={index} dangerouslySetInnerHTML={{ __html: html }} />;
-                            } catch (e) { return <span key={index}>{part}</span>; }
+                            } catch (e) { 
+                                return <span key={index}>{part.text}</span>; 
+                            }
                         }
-                        return <span key={index}>{part}</span>;
+                        return <span key={index}>{part.text}</span>;
                     })}
                 </span>
             );
         };
+
+         
 
         // ==========================================
         //  MAIN APP COMPONENT

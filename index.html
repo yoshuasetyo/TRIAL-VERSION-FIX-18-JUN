@@ -62,9 +62,17 @@
         };
 
         const MathText = ({ text }) => {
-            if (!text) return null;
-            if (!window.katex) return <span>{text}</span>;
-            const parts = text.split('$');
+            //1. Prevent null/undefined crashes
+            if (text === null || text === null) return null;
+
+            //2. Force all incoming data (like the number 15) to be a text string
+            const safeText = String(text);
+
+            //3. Fixed a hidden bug that would have rendered the literal word "text"
+            if (!window.katex) return <span>{safeText}</span>;
+
+            //Now .split() will never crash!
+            const parts = safeText.split('$');
             return (
                 <span>
                     {parts.map((part, index) => {
@@ -298,6 +306,18 @@
                             <div className="mt-8 p-4 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-2xl uppercase tracking-wider">
                                 🟢 You can safely close the quiz window now.
                             </div>
+                        </div>
+                    </div>
+                );
+            }
+
+                        if (step === 'quiz' && questions.length === 0) {
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-screen font-sans text-center p-6">
+                        <div className="bg-white p-8 rounded-[2rem] shadow-xl text-center border-b-8 border-slate-300 max-w-sm">
+                            <div className="text-slate-300 text-4xl mb-4">📭</div>
+                            <h2 className="text-slate-800 font-black uppercase text-lg leading-tight">No Questions Found</h2>
+                            <p className="text-[10px] text-slate-400 mt-2 leading-relaxed uppercase tracking-widest font-bold">Check your Google Sheet data.</p>
                         </div>
                     </div>
                 );

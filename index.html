@@ -61,60 +61,41 @@
             return newArr;
         };
 
-                const MathText = ({ text }) => {
-            // 1. Prevent null/undefined crashes
-            if (text === null || text === undefined) return null;
+const MathText = ({ text }) => {
+    // 1. Prevent null/undefined crashes (fixed your double-null check here too)
+    if (text == null) return null;
 
-            // 2. Force all incoming data to be a text string
-            const safeText = String(text);
+    // 2. Force all incoming data to be a text string
+    const safeText = String(text);
 
-            // 3. Fallback if KaTeX didn't load
-            if (!window.katex) return <span>{safeText}</span>;
+    // 3. Fallback if KaTeX failed to load
+    if (!window.katex) return <span>{safeText}</span>;
 
-            // 4. Regex matches either $...$ OR \(...\)
-            // It captures the inner math formula using alternative groups
-            const regex = /\$(.*?)\$|\\\\\((.*?)\\\\\)/g;
-            
-            const parts = [];
-            let lastIndex = 0;
-            let match;
+    // 4. NORMALIZE: Swap Google Sheets \( and \) delimiters into standard $ delimiters
+    // We use \\ to escape the backslashes in the regex
+    const normalizedText = safeText.replace(/\\\(/g, '$').replace(/\\\)/g, '$');
 
-            // Dynamically parse text segments
-            while ((match = regex.exec(safeText)) !== null) {
-                // Add plain text before the math match
-                if (match.index > lastIndex) {
-                    parts.push({ isMath: false, text: safeText.substring(lastIndex, match.index) });
+    // 5. Split and render (now handles both format types safely)
+    const parts = normalizedText.split('$');
+    
+    return (
+        <span>
+            {parts.map((part, index) => {
+                // Odd indexes are the math bits between the delimiters
+                if (index % 2 !== 0) {
+                    try {
+                        const html = window.katex.renderToString(part, { displayMode: false, throwOnError: false });
+                        return <span key={index} dangerouslySetInnerHTML={{ __html: html }} />;
+                    } catch (e) { 
+                        return <span key={index}>{part}</span>; 
+                    }
                 }
-                
-                // Get the captured math string (group 1 for $, group 2 for \()
-                const mathContent = match[1] || match[2];
-                parts.push({ isMath: true, text: mathContent });
-                
-                lastIndex = regex.lastIndex;
-            }
-
-            // Add remaining trailing plain text
-            if (lastIndex < safeText.length) {
-                parts.push({ isMath: false, text: safeText.substring(lastIndex) });
-            }
-
-            return (
-                <span>
-                    {parts.map((part, index) => {
-                        if (part.isMath) {
-                            try {
-                                const html = window.katex.renderToString(part.text, { displayMode: false, throwOnError: false });
-                                return <span key={index} dangerouslySetInnerHTML={{ __html: html }} />;
-                            } catch (e) { 
-                                return <span key={index}>{part.text}</span>; 
-                            }
-                        }
-                        return <span key={index}>{part.text}</span>;
-                    })}
-                </span>
-            );
-        };
-
+                // Even indexes are just normal text
+                return <span key={index}>{part}</span>;
+            })}
+        </span>
+    );
+};
          
 
         // ==========================================
